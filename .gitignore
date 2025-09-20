@@ -1,0 +1,20 @@
+# Python virtual environment
+.venv/
+venv/
+Include/
+Lib/
+Scripts/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Database file
+test.db
+
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# IDE specific
+.vscode/
