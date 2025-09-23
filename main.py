@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from passlib.context import CryptContext
-from pantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict # <-- CORRECTED THIS LINE
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import enum
@@ -40,8 +40,6 @@ app.add_middleware(
 )
 
 # --- 2. Database Setup ---
-# UPDATED: The URL format was incorrect. You must add the host address.
-# Get the host address from your colleague or database provider.
 DB_USER = "civic_sathi_db_user"
 DB_PASSWORD = "MCGLXyhZ4Xw6cElqRZZ9S0Pkv5gFZ8LT"
 DB_HOST = "dpg-d37sdcggjchc73cho540-a.singapore-postgres.render.com"
