@@ -1,4 +1,6 @@
-# The corrected and final main.py file with proper structure
+# This main.py has been simplified to only manage the 'employees' table.
+# All logic for citizen users has been removed as requested.
+
 import os
 import shutil
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
@@ -24,10 +26,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 origins = [
     "http://localhost",
     "http://localhost:5173",
-    "http://127.0.0.1:5500", 
+    "http://127.0.0.1:5500",
     "null",
     "https://chandankumar835205-cmyk.github.io",
-    "*"
 ]
 
 app.add_middleware(
@@ -39,7 +40,15 @@ app.add_middleware(
 )
 
 # --- 2. Database Setup ---
-DATABASE_URL = "sqlite:///./test.db"
+# UPDATED: The URL format was incorrect. You must add the host address.
+# Get the host address from your colleague or database provider.
+DB_USER = "civic_sathi_db_user"
+DB_PASSWORD = "MCGLXyhZ4Xw6cElqRZZ9S0Pkv5gFZ8LT"
+DB_HOST = "dpg-d37sdcggjchc73cho540-a.singapore-postgres.render.com"
+DB_NAME = "civic_sathi_db"
+
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -48,12 +57,6 @@ Base = declarative_base()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = "a-very-secret-key-that-you-should-change"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# --- 4. Database Models (SQLAlchemy) ---
-class UserRole(str, enum.Enum):
-    admin = "admin"
     departhead = "departhead"
     staff = "staff"
 
@@ -62,12 +65,13 @@ class IssueStatus(str, enum.Enum):
     in_progress = "In Progress"
     resolved = "Resolved"
 
-class User(Base):
-    __tablename__ = "users"
+# -- The single table for all web portal employees --
+class Employee(Base):
+    __tablename__ = "employees"
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    role = Column(Enum(UserRole), default=UserRole.staff)
+    role = Column(Enum(EmployeeRole), nullable=False)
     department = Column(String, nullable=True)
 
 class Issue(Base):
@@ -90,7 +94,6 @@ class IssueBase(BaseModel):
     description: str
     location: str
     department: str
-    status: IssueStatus = IssueStatus.pending
     image_url: str | None = None
     audio_url: str | None = None
 
@@ -103,23 +106,23 @@ class IssueUpdate(BaseModel):
 class IssueResponse(IssueBase):
     id: int
     created_at: datetime
+    status: IssueStatus
     model_config = ConfigDict(from_attributes=True)
 
-class UserCreate(BaseModel):
+class EmployeeCreate(BaseModel):
     email: str
     password: str
-    role: UserRole
+    role: EmployeeRole
     department: str | None = None
 
-class UserResponse(BaseModel):
+class EmployeeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     email: str
-    role: UserRole
+    role: EmployeeRole
     department: str | None = None
 
 class TokenData(BaseModel):
     email: str | None = None
-    role: UserRole | None = None
 
 # --- 6. Dependencies ---
 def get_db():
@@ -132,17 +135,13 @@ def get_db():
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
+def create_access_token(data: dict):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+async def get_current_employee(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
@@ -153,109 +152,74 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
+    employee = db.query(Employee).filter(Employee.email == email).first()
+    if employee is None:
         raise credentials_exception
-    return user
+    return employee
 
 # --- 7. API Endpoints ---
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Civic Issue Management API!"}
-    
-@app.post("/uploadfile/")
-async def create_upload_file(file: UploadFile = File(...)):
-    file_path = f"static/uploads/{file.filename}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return {"file_url": f"/static/uploads/{file.filename}"}
-
-@app.post("/users/", response_model=UserResponse)
-def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.email == user.email).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    hashed_password = pwd_context.hash(user.password)
-    new_user = User(
-        email=user.email,
-        hashed_password=hashed_password,
-        role=user.role,
-        department=user.department
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
-
 @app.post("/token")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # Simplified to only check the employees table
+    employee = db.query(Employee).filter(Employee.email == form_data.username).first()
+    if not employee or not verify_password(form_data.password, employee.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"})
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
     access_token = create_access_token(
-        data={"sub": user.email, "role": user.role.value}, expires_delta=access_token_expires
+        data={"sub": employee.email, "role": employee.role.value}
     )
-    return {"access_token": access_token, "token_type": "bearer", "user_role": user.role.value}
+    return {"access_token": access_token, "token_type": "bearer", "user_role": employee.role.value}
 
-@app.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    return current_user
 
-@app.post("/issues/", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
-def create_issue(
-    issue: IssueCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    new_issue = Issue(
-        title=issue.title,
-        description=issue.description,
-        location=issue.location,
-        department=issue.department,
-        status=IssueStatus.pending,
-        image_url=issue.image_url,
-        audio_url=issue.audio_url
+@app.post("/employees/", response_model=EmployeeResponse)
+def create_employee_user(employee: EmployeeCreate, db: Session = Depends(get_db)):
+    # This endpoint is now the only way to create users.
+    # In a real app, this should be protected so only admins can use it.
+    db_employee = db.query(Employee).filter(Employee.email == employee.email).first()
+    if db_employee:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = pwd_context.hash(employee.password)
+    new_employee = Employee(
+        email=employee.email,
+        hashed_password=hashed_password,
+        role=employee.role,
+        department=employee.department
     )
-    db.add(new_issue)
+    db.add(new_employee)
     db.commit()
-    db.refresh(new_issue)
-    return new_issue
+    db.refresh(new_employee)
+    return new_employee
+
 
 @app.get("/issues/", response_model=List[IssueResponse])
 def read_issues(
-    status: IssueStatus | None = None,
-    department: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_employee: Employee = Depends(get_current_employee)
 ):
     query = db.query(Issue)
-    if current_user.role == UserRole.departhead:
-        query = query.filter(Issue.department == current_user.department)
-    elif department:
-        query = query.filter(Issue.department == department)
-
-    if status:
-        query = query.filter(Issue.status == status)
+    if current_employee.role == EmployeeRole.departhead:
+        query = query.filter(Issue.department == current_employee.department)
     
     issues = query.all()
     return issues
+
 
 @app.put("/issues/{issue_id}", response_model=IssueResponse)
 def update_issue_status(
     issue_id: int,
     issue_update: IssueUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_employee: Employee = Depends(get_current_employee)
 ):
     issue = db.query(Issue).filter(Issue.id == issue_id).first()
     if issue is None:
         raise HTTPException(status_code=404, detail="Issue not found")
     
-    if current_user.role == UserRole.departhead and issue.department != current_user.department:
+    # Security check: only allow dept heads to edit issues in their own dept
+    if current_employee.role == EmployeeRole.departhead and issue.department != current_employee.department:
         raise HTTPException(status_code=403, detail="Not authorized to update this issue")
 
     issue.status = issue_update.status
@@ -263,18 +227,6 @@ def update_issue_status(
     db.refresh(issue)
     return issue
 
-@app.delete("/issues/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_issue(
-    issue_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Not authorized to delete issues")
-    issue = db.query(Issue).filter(Issue.id == issue_id).first()
-    if issue is None:
-        raise HTTPException(status_code=404, detail="Issue not found")
-    db.delete(issue)
-    db.commit()
-    return
+
+
 
