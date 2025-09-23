@@ -1,6 +1,7 @@
 # The corrected and final main.py file with proper structure
-
-from fastapi import FastAPI, Depends, HTTPException, status
+import os
+import shutil
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import sessionmaker, Session
@@ -12,16 +13,21 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import enum
 from typing import List
+from fastapi.staticfiles import StaticFiles
 
 # --- 1. App and Middleware Setup ---
 app = FastAPI()
+
+os.makedirs("static/uploads", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 origins = [
     "http://localhost",
     "http://localhost:5173",
     "http://127.0.0.1:5500", 
     "null",
-    "https://chandankumar835205-cmyk.github.io", # ADD THIS LINE
+    "https://chandankumar835205-cmyk.github.io",
+    "*"
 ]
 
 app.add_middleware(
@@ -34,7 +40,7 @@ app.add_middleware(
 
 # --- 2. Database Setup ---
 DATABASE_URL = "sqlite:///./test.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -73,6 +79,8 @@ class Issue(Base):
     department = Column(String)
     status = Column(Enum(IssueStatus), default=IssueStatus.pending)
     created_at = Column(DateTime, default=datetime.utcnow)
+    image_url = Column(String, nullable=True)
+    audio_url = Column(String, nullable=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -83,6 +91,8 @@ class IssueBase(BaseModel):
     location: str
     department: str
     status: IssueStatus = IssueStatus.pending
+    image_url: str | None = None
+    audio_url: str | None = None
 
 class IssueCreate(IssueBase):
     pass
@@ -149,11 +159,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     return user
 
 # --- 7. API Endpoints ---
-
-# NEW: Root endpoint to check if the server is running
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Civic Issue Management API!"}
+    
+@app.post("/uploadfile/")
+async def create_upload_file(file: UploadFile = File(...)):
+    file_path = f"static/uploads/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return {"file_url": f"/static/uploads/{file.filename}"}
 
 @app.post("/users/", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
@@ -190,6 +205,26 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+@app.post("/issues/", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
+def create_issue(
+    issue: IssueCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    new_issue = Issue(
+        title=issue.title,
+        description=issue.description,
+        location=issue.location,
+        department=issue.department,
+        status=IssueStatus.pending,
+        image_url=issue.image_url,
+        audio_url=issue.audio_url
+    )
+    db.add(new_issue)
+    db.commit()
+    db.refresh(new_issue)
+    return new_issue
+
 @app.get("/issues/", response_model=List[IssueResponse])
 def read_issues(
     status: IssueStatus | None = None,
@@ -198,7 +233,6 @@ def read_issues(
     current_user: User = Depends(get_current_user)
 ):
     query = db.query(Issue)
-
     if current_user.role == UserRole.departhead:
         query = query.filter(Issue.department == current_user.department)
     elif department:
@@ -243,3 +277,4 @@ def delete_issue(
     db.delete(issue)
     db.commit()
     return
+
