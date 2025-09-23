@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from passlib.context import CryptContext
-from pydantic import BaseModel, ConfigDict
+from pantic import BaseModel, ConfigDict
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import enum
@@ -57,6 +57,14 @@ Base = declarative_base()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = "a-very-secret-key-that-you-should-change"
 ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# --- 4. Database Models (SQLAlchemy) ---
+
+# -- Roles --
+class EmployeeRole(str, enum.Enum):
+    admin = "admin"
     departhead = "departhead"
     staff = "staff"
 
@@ -226,7 +234,4 @@ def update_issue_status(
     db.commit()
     db.refresh(issue)
     return issue
-
-
-
 
