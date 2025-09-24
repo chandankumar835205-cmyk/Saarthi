@@ -1,69 +1,58 @@
-# This main.py has been simplified to only manage the 'employees' table.
-# All logic for citizen users has been removed as requested.
+# --- WEB PORTAL BACKEND ---
+# This backend is exclusively for the employee web portal.
+# It connects to the SAME database as the mobile app to manage issues.
 
-import os
-import shutil
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime, Float, ForeignKey
+from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from passlib.context import CryptContext
-from pydantic import BaseModel, ConfigDict # <-- CORRECTED THIS LINE
+from pydantic import BaseModel, ConfigDict
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import enum
-from typing import List
-from fastapi.staticfiles import StaticFiles
+from typing import List, Optional
+from fastapi.middleware.cors import CORSMiddleware
+import os
 
-# --- 1. App and Middleware Setup ---
-app = FastAPI()
-
-os.makedirs("static/uploads", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-origins = [
-    "http://localhost",
-    "http://localhost:5173",
-    "http://127.0.0.1:5500",
-    "null",
-    "https://chandankumar835205-cmyk.github.io",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- 2. Database Setup ---
+# --- 1. Database Connection (Mirrors Mobile App) ---
+# This connects to the database that your mobile app backend uses.
 DB_USER = "civic_sathi_db_user"
 DB_PASSWORD = "MCGLXyhZ4Xw6cElqRZZ9S0Pkv5gFZ8LT"
 DB_HOST = "dpg-d37sdcggjchc73cho540-a.singapore-postgres.render.com"
 DB_NAME = "civic_sathi_db"
-
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+DATABASE_URL = os.environ.get("DATABASE_URL", f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- 3. Security & Password Setup ---
+# --- 2. App and Middleware Setup ---
+app = FastAPI(title="Civic Sathi Web Portal API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to your web portal's domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- 3. Security & Auth Setup ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-SECRET_KEY = "a-very-secret-key-that-you-should-change"
+SECRET_KEY = "8992f74fef2ef011ddc72afa9d0f99218c9a7c01c2bf881e700e41d6c6b55b85" # Use the same key as the mobile backend
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token/employee")
 
-# --- 4. Database Models (SQLAlchemy) ---
+# --- 4. Database Models (Must PERFECTLY match the mobile app's database tables) ---
 
-# -- Roles --
+# Enums (copied for consistency)
 class EmployeeRole(str, enum.Enum):
-    admin = "admin"
-    departhead = "departhead"
+    super_admin = "super_admin"
+    department_head = "department_head"
     staff = "staff"
 
 class IssueStatus(str, enum.Enum):
@@ -71,66 +60,78 @@ class IssueStatus(str, enum.Enum):
     in_progress = "In Progress"
     resolved = "Resolved"
 
-# -- The single table for all web portal employees --
+# This model represents the 'users' table created by the mobile app.
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=True)
+    phone_number = Column(String, unique=True, index=True, nullable=True)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String, index=True)
+    issues = relationship("Issue", back_populates="submitter")
+
+# This model represents the 'employees' table.
 class Employee(Base):
     __tablename__ = "employees"
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
     role = Column(Enum(EmployeeRole), nullable=False)
     department = Column(String, nullable=True)
 
+# This model represents the 'issues' table created by the mobile app.
 class Issue(Base):
     __tablename__ = "issues"
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
     description = Column(String)
-    location = Column(String)
     department = Column(String)
-    status = Column(Enum(IssueStatus), default=IssueStatus.pending)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    image_url = Column(String, nullable=True)
-    audio_url = Column(String, nullable=True)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    photo_url = Column(String)
+    audio_url = Column(String)
+    status = Column(Enum(IssueStatus), default=IssueStatus.pending, nullable=False)
+    submitted_at = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    submitter = relationship("User", back_populates="issues")
 
-Base.metadata.create_all(bind=engine)
+# --- CRITICAL: We DO NOT call Base.metadata.create_all(bind=engine) here. ---
+# The mobile app backend is responsible for creating tables. This backend only reads/writes to them.
 
-# --- 5. Data Schemas (Pydantic) ---
-class IssueBase(BaseModel):
-    title: str
-    description: str
-    location: str
-    department: str
-    image_url: str | None = None
-    audio_url: str | None = None
-
-class IssueCreate(IssueBase):
-    pass
-
-class IssueUpdate(BaseModel):
-    status: IssueStatus
-
-class IssueResponse(IssueBase):
-    id: int
-    created_at: datetime
-    status: IssueStatus
-    model_config = ConfigDict(from_attributes=True)
-
+# --- 5. Pydantic Schemas (For data validation) ---
 class EmployeeCreate(BaseModel):
     email: str
     password: str
     role: EmployeeRole
-    department: str | None = None
+    department: Optional[str] = None
 
 class EmployeeResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
     email: str
     role: EmployeeRole
-    department: str | None = None
+    department: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+    
+class EmployeeToken(BaseModel):
+    access_token: str
+    token_type: str
+    user_role: EmployeeRole
 
-class TokenData(BaseModel):
-    email: str | None = None
+class IssueUpdate(BaseModel):
+    status: IssueStatus
 
-# --- 6. Dependencies ---
+class IssueResponse(BaseModel):
+    id: int
+    description: str
+    department: str
+    latitude: float
+    longitude: float
+    photo_url: str
+    audio_url: str
+    status: IssueStatus
+    submitted_at: datetime
+    user_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+# --- 6. Dependencies & Helper Functions ---
 def get_db():
     db = SessionLocal()
     try:
@@ -141,16 +142,17 @@ def get_db():
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_employee(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
+def get_current_employee_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
@@ -163,73 +165,56 @@ async def get_current_employee(token: str = Depends(oauth2_scheme), db: Session 
         raise credentials_exception
     return employee
 
-# --- 7. API Endpoints ---
-@app.post("/token")
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # Simplified to only check the employees table
+# --- 7. API Endpoints for the Web Portal ---
+@app.post("/token/employee", response_model=EmployeeToken)
+def login_employee(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     employee = db.query(Employee).filter(Employee.email == form_data.username).first()
     if not employee or not verify_password(form_data.password, employee.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     
-    access_token = create_access_token(
-        data={"sub": employee.email, "role": employee.role.value}
-    )
+    access_token = create_access_token(data={"sub": employee.email, "role": employee.role.value})
     return {"access_token": access_token, "token_type": "bearer", "user_role": employee.role.value}
 
-
-@app.post("/employees/", response_model=EmployeeResponse)
-def create_employee_user(employee: EmployeeCreate, db: Session = Depends(get_db)):
-    # This endpoint is now the only way to create users.
-    # In a real app, this should be protected so only admins can use it.
-    db_employee = db.query(Employee).filter(Employee.email == employee.email).first()
-    if db_employee:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    hashed_password = pwd_context.hash(employee.password)
-    new_employee = Employee(
-        email=employee.email,
-        hashed_password=hashed_password,
-        role=employee.role,
-        department=employee.department
-    )
-    db.add(new_employee)
-    db.commit()
-    db.refresh(new_employee)
-    return new_employee
-
-
-@app.get("/issues/", response_model=List[IssueResponse])
-def read_issues(
-    db: Session = Depends(get_db),
-    current_employee: Employee = Depends(get_current_employee)
-):
+@app.get("/issues/all/", response_model=List[IssueResponse])
+def get_all_issues(db: Session = Depends(get_db), current_employee: Employee = Depends(get_current_employee_user)):
     query = db.query(Issue)
-    if current_employee.role == EmployeeRole.departhead:
+    if current_employee.role == EmployeeRole.department_head:
         query = query.filter(Issue.department == current_employee.department)
-    
-    issues = query.all()
-    return issues
+    return query.order_by(Issue.submitted_at.desc()).all()
 
-
-@app.put("/issues/{issue_id}", response_model=IssueResponse)
-def update_issue_status(
-    issue_id: int,
-    issue_update: IssueUpdate,
-    db: Session = Depends(get_db),
-    current_employee: Employee = Depends(get_current_employee)
-):
+@app.put("/issues/{issue_id}/status", response_model=IssueResponse)
+def update_issue_status(issue_id: int, issue_update: IssueUpdate, db: Session = Depends(get_db), current_employee: Employee = Depends(get_current_employee_user)):
     issue = db.query(Issue).filter(Issue.id == issue_id).first()
-    if issue is None:
+    if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    
-    # Security check: only allow dept heads to edit issues in their own dept
-    if current_employee.role == EmployeeRole.departhead and issue.department != current_employee.department:
+
+    if current_employee.role == EmployeeRole.department_head and issue.department != current_employee.department:
         raise HTTPException(status_code=403, detail="Not authorized to update this issue")
+    if current_employee.role == EmployeeRole.staff:
+        raise HTTPException(status_code=403, detail="Not authorized to perform this action")
 
     issue.status = issue_update.status
     db.commit()
     db.refresh(issue)
     return issue
+
+@app.post("/employees/create/", response_model=EmployeeResponse)
+def create_employee(employee: EmployeeCreate, db: Session = Depends(get_db), current_employee: Employee = Depends(get_current_employee_user)):
+    if current_employee.role != EmployeeRole.super_admin:
+        raise HTTPException(status_code=403, detail="Only a super admin can create new employees")
+    
+    db_employee = db.query(Employee).filter(Employee.email == employee.email).first()
+    if db_employee:
+        raise HTTPException(status_code=400, detail="Employee with this email already exists")
+
+    hashed_password = get_password_hash(employee.password)
+    new_employee = Employee(**employee.model_dump(exclude={"password"}), hashed_password=hashed_password)
+    db.add(new_employee)
+    db.commit()
+    db.refresh(new_employee)
+    return new_employee
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Civic Sathi Web Portal Backend!"}
 
