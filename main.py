@@ -15,8 +15,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker, Session
 
 # --- Configuration ---
-SQLALCHEMY_DATABASE_URL = "postgresql://civic_sathi_db_user:MCGLXyhZ4Xw6cElqRZZ9S0Pkv5gFZ8LT@dpg-d37sdcggjchc73cho540-a.singapore-postgres.render.com/civic_sathi_db"
-SECRET_KEY = "2c1aaaf7db092e6d9a75e2a66c8f636093f2a26fdf372e5c172825665ec00680"
+SQLALCHEMY_DATABASE_URL = "postgresql://civic_sathi_db_test_user:zcX8yhSmabkCbryAFNir4c3edVtDVYl7@dpg-d3a4mdjipnbc739af8ng-a.singapore-postgres.render.com/civic_sathi_db_test"
+SECRET_KEY = "6a0991bf60f6d7424c01730e5bf48b2a4dadf30affd4269f107eb1336f6ada3c"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
