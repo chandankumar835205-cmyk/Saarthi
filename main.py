@@ -154,11 +154,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 # --- FastAPI App ---
 app = FastAPI(title="Web Portal Backend")
-origins = [
-    "https://chandankumar835205-cmyk.github.io",  # your deployed frontend
-    "http://127.0.0.1:5500",  # optional: local testing
-]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
